@@ -131,7 +131,7 @@ All credit for the core camera app, UI/UX design, and filter concepts goes to Es
 ### 1. Fork & Clone
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/v0-nano-banana-cam-x402.git
+git clone https://github.com/Must-be-Ash/v0-nano-banana-cam-x402
 cd v0-nano-banana-cam-x402
 npm install
 ```
