@@ -6,7 +6,7 @@ import { getCurrentUser, toViemAccount } from "@coinbase/cdp-core"
 import { CameraCapture } from "./camera-capture"
 import { ProcessedImage } from "./processed-image"
 import { addWatermark } from "../lib/watermark"
-import { createWalletClient, http, publicActions } from "viem"
+import { createPublicClient, http } from "viem"
 import { base } from "viem/chains"
 
 export type FilterType =
@@ -188,12 +188,14 @@ export function CameraApp() {
           throw new Error("Please connect your wallet to process images")
         }
 
-        // Import x402-fetch
-        const { wrapFetchWithPayment } = await import("x402-fetch")
+        // Import x402 v2 client packages
+        const { wrapFetchWithPayment, x402Client } = await import("@x402/fetch")
+        const { ExactEvmScheme, toClientEvmSigner } = await import("@x402/evm")
 
-        // Create viem client based on wallet type
-        // Type annotation bypasses complex viem/x402 type incompatibility
-        let viemClient: any
+        const publicClient = createPublicClient({ chain: base, transport: http("https://mainnet.base.org") })
+
+        // Build an x402 signer from either wallet type
+        let signer
 
         if (isCDPWallet) {
           // Using CDP embedded wallet (email sign-in)
@@ -203,14 +205,7 @@ export function CameraApp() {
             const user = await getCurrentUser()
             if (user && user.evmAccounts && user.evmAccounts.length > 0) {
               const viemAccount = await toViemAccount(user.evmAccounts[0])
-              const chain = base
-              const rpcUrl = 'https://mainnet.base.org'
-
-              viemClient = createWalletClient({
-                account: viemAccount,
-                chain: chain,
-                transport: http(rpcUrl),
-              }).extend(publicActions)
+              signer = toClientEvmSigner(viemAccount as any, publicClient)
             } else {
               throw new Error("No CDP wallet account found")
             }
@@ -221,18 +216,24 @@ export function CameraApp() {
         } else if (walletClient) {
           // Using external wallet (MetaMask, Coinbase Wallet, etc.)
           console.log("[thumbnail-maker] Using external wallet for x402 payment")
-          viemClient = walletClient.extend(publicActions)
+          signer = toClientEvmSigner(
+            {
+              address: walletClient.account.address,
+              signTypedData: (message) => walletClient.signTypedData(message as any),
+            },
+            publicClient,
+          )
         } else {
           throw new Error("No wallet client available")
         }
 
-        // Create wrapped fetch with payment handling
-        // @ts-ignore - viem client types are compatible but TypeScript has issues with complex generics
-        const fetchWithPayment = wrapFetchWithPayment(
-          fetch,
-          viemClient,
-          BigInt(0.1 * 10 ** 6) // Max payment: $0.10 USDC
-        ) as typeof fetch
+        // Max payment: $0.10 USDC (amount is in USDC atomic units)
+        const MAX_PAYMENT = BigInt(0.1 * 10 ** 6)
+        const client = new x402Client()
+          .register("eip155:8453", new ExactEvmScheme(signer))
+          .registerPolicy((_version, reqs) => reqs.filter((r) => BigInt(r.amount) <= MAX_PAYMENT))
+
+        const fetchWithPayment = wrapFetchWithPayment(fetch, client)
 
         // Make request with x402 payment handling
         // Send both customPrompt and filter (filter may be "none")

@@ -164,7 +164,7 @@ CDP_API_KEY_SECRET=your-cdp-api-key-secret
 RECIPIENT_WALLET_ADDRESS=0xYourWalletAddress
 
 # Network configuration (Base mainnet)
-NEXT_PUBLIC_NETWORK=base
+NEXT_PUBLIC_NETWORK=eip155:8453
 NEXT_PUBLIC_USDC_CONTRACT=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 
 # WalletConnect (for RainbowKit wallet connection)
@@ -183,7 +183,10 @@ KV_REST_API_TOKEN=your-upstash-redis-token
 Edit `app/api/process-image/route.ts`:
 
 ```typescript
-const PAYMENT_AMOUNT = 0.05  // Change to your desired price in USD
+export const POST = withX402(handler, {
+  accepts: { scheme: "exact", price: "$0.05", ... }, // Change to your desired price in USD
+  ...
+}, resourceServer)
 ```
 
 ### 5. Test Locally
@@ -195,7 +198,7 @@ npm run dev
 Open [http://localhost:3000](http://localhost:3000)
 
 **Testing Tips:**
-- Use testnet first (change `NEXT_PUBLIC_NETWORK=base-sepolia`)
+- Use testnet first (change `NEXT_PUBLIC_NETWORK=eip155:84532`)
 - Get test USDC from [CDP Faucet](https://portal.cdp.coinbase.com/products/faucet)
 - Monitor payments in browser console logs
 
@@ -233,16 +236,19 @@ const { data: walletClient } = useWalletClient()
 // 2. User captures photo and selects filter
 // → triggers payment flow
 
-// 3. x402-fetch wraps native fetch
-const { wrapFetchWithPayment } = await import("x402-fetch")
-const { publicActions } = await import("viem")
-const extendedClient = walletClient.extend(publicActions)
+// 3. Build an x402 v2 client and wrap native fetch
+const { wrapFetchWithPayment, x402Client } = await import("@x402/fetch")
+const { ExactEvmScheme, toClientEvmSigner } = await import("@x402/evm")
 
-const fetchWithPayment = wrapFetchWithPayment(
-  fetch,
-  extendedClient,
-  BigInt(0.1 * 10 ** 6) // Max: $0.10 USDC (safety limit)
+const signer = toClientEvmSigner(
+  { address: walletClient.account.address, signTypedData: (msg) => walletClient.signTypedData(msg) },
+  publicClient,
 )
+const client = new x402Client()
+  .register("eip155:8453", new ExactEvmScheme(signer))
+  .registerPolicy((_v, reqs) => reqs.filter((r) => BigInt(r.amount) <= BigInt(0.1 * 10 ** 6))) // Max: $0.10 USDC
+
+const fetchWithPayment = wrapFetchWithPayment(fetch, client)
 
 // 4. Automatic payment handling
 const response = await fetchWithPayment("/api/process-image", {
@@ -253,7 +259,7 @@ const response = await fetchWithPayment("/api/process-image", {
 // Payment happens automatically:
 // - First request → receives 402 with payment requirements
 // - Client signs EIP-3009 authorization (one signature)
-// - Retries with X-PAYMENT header
+// - Retries with PAYMENT-SIGNATURE header
 // - Server verifies, settles, processes image
 ```
 
@@ -261,45 +267,29 @@ const response = await fetchWithPayment("/api/process-image", {
 
 ```typescript
 // app/api/process-image/route.ts
+import { facilitator } from "@coinbase/x402"
+import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server"
+import { ExactEvmScheme } from "@x402/evm/exact/server"
+import { withX402 } from "@/lib/x402" // verifies + settles before the handler runs
 
-export async function POST(request: NextRequest) {
-  // 1. Check for payment header
-  const paymentHeader = request.headers.get("X-PAYMENT")
-  if (!paymentHeader) {
-    return NextResponse.json({
-      x402Version: 1,
-      accepts: [{ scheme: "exact", network: "base", ... }]
-    }, { status: 402 })
-  }
+const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient(facilitator))
+  .register("eip155:8453", new ExactEvmScheme())
 
-  // 2. Decode payment
-  const paymentPayload = JSON.parse(
-    Buffer.from(paymentHeader, "base64").toString("utf-8")
-  )
-
-  // 3. Verify payment (CDP facilitator)
-  const verifyResult = await verifyPayment(paymentPayload, requirements)
-  if (!verifyResult.isValid) {
-    return NextResponse.json({ error: "Invalid payment" }, { status: 402 })
-  }
-
-  // 4. Settle payment BEFORE processing (collect money first!)
-  const settleResult = await settlePayment(paymentPayload, requirements)
-  if (!settleResult.success) {
-    return NextResponse.json({ error: "Settlement failed" }, { status: 402 })
-  }
-
-  // 5. Process image (only after payment settled)
+async function handler(request: NextRequest) {
+  // Only runs after payment is verified AND settled
   const result = await fal.subscribe("fal-ai/nano-banana/edit", {
     input: { prompt, image_urls: [imageUrl] }
   })
-
-  // 6. Return processed image with payment receipt
-  return NextResponse.json(
-    { processedImageUrl: result.data.images[0].url },
-    { headers: { "X-PAYMENT-RESPONSE": base64Receipt } }
-  )
+  return NextResponse.json({ processedImageUrl: result.data.images[0].url })
 }
+
+export const POST = withX402(handler, {
+  accepts: { scheme: "exact", price: "$0.05", network: "eip155:8453", payTo: RECIPIENT_ADDRESS },
+  description: "AI image transformation with Nano Banana - $0.05",
+}, resourceServer)
+
+// No PAYMENT-SIGNATURE header → 402 with PAYMENT-REQUIRED header
+// Successful response → includes PAYMENT-RESPONSE receipt header
 ```
 
 **Key Security Points:**
@@ -358,14 +348,14 @@ npm start
 
 ### Environment-Specific Testing
 
-**Testnet (base-sepolia):**
+**Testnet (Base Sepolia, `eip155:84532`):**
 ```bash
-NEXT_PUBLIC_NETWORK=base-sepolia
+NEXT_PUBLIC_NETWORK=eip155:84532
 ```
 
-**Mainnet (base):**
+**Mainnet (Base, `eip155:8453`):**
 ```bash
-NEXT_PUBLIC_NETWORK=base
+NEXT_PUBLIC_NETWORK=eip155:8453
 ```
 
 ### Debugging Payment Issues

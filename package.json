@@ -14,7 +14,7 @@
     "@coinbase/cdp-react": "^0.0.43",
     "@coinbase/cdp-sdk": "^1.38.4",
     "@coinbase/cdp-wagmi": "^0.0.43",
-    "@coinbase/x402": "^0.6.6",
+    "@coinbase/x402": "^2.1.0",
     "@fal-ai/client": "latest",
     "@fal-ai/serverless-client": "0.15.0",
     "@hookform/resolvers": "^3.10.0",
@@ -49,6 +49,9 @@
     "@tanstack/react-query": "^5.90.2",
     "@upstash/redis": "latest",
     "@vercel/analytics": "latest",
+    "@x402/core": "^2.30.0",
+    "@x402/evm": "^2.30.0",
+    "@x402/fetch": "^2.30.0",
     "autoprefixer": "^10.4.20",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -72,9 +75,6 @@
     "vaul": "^0.9.9",
     "viem": "^2.38.0",
     "wagmi": "^2.18.0",
-    "x402": "^0.6.6",
-    "x402-fetch": "^0.6.6",
-    "x402-next": "^0.6.5",
     "zod": "3.25.67"
   },
   "devDependencies": {
